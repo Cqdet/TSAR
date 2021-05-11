@@ -1,34 +1,33 @@
-use std::fs::*;
+use std::fs::{read, File, read_dir, read_to_string, write, create_dir_all};
 use std::io::*;
-use std::path::*;
-use std::env::*;
+use std::path::Path;
+use std::env::args;
+use std::io::{ErrorKind, Error};
+use std::process::exit;
 
-fn main() {
-    let args: Vec<String> = args().collect::<Vec<String>>();
-    let (cmd, item) = (&args[1], &args[2]); 
-    if cmd == "bundle" {
-        if Some(item) == None {
-            panic!("Pass in an item to bundle");
+pub fn main() {
+    let args: Vec<String> = args().collect();
+    let cmd = args.get(1);
+    let dir = args.get(2);
+    if cmd.is_none() { err_exit("No command is specified") }
+    if dir.is_none() { err_exit("No directory is specified") }
+    let cmd = &cmd.unwrap()[..];
+    let dir = dir.unwrap();
+    match cmd {
+        "bundle" => { bundle(dir) }
+        "unbundle" => { unbundle(dir) }
+        _ => {
+            err_exit("Invalid command is specified");
         }
-
-        bundle(String::from(item));
-    } else if cmd == "unbundle" {
-        if Some(item) == None {
-            panic!("Pass in a directory to unbundle");
-        }
-
-        unbundle(String::from(item));
-    } else {
-        panic!("Invalid argument!");
     }
 }
 
-pub fn bundle(dir: String) {
+pub fn bundle(dir: &str) {
     append_out_file(None);
     read_recursive(dir, Vec::new());
 }
 
-pub fn unbundle(file: String) {
+pub fn unbundle(file: &str) {
     let data = read_to_string(file).expect("FILE ERROR: Unable to read from file");
     for line in data.split("\n") {
         if line.len() < 1 { continue };
@@ -41,7 +40,6 @@ pub fn unbundle(file: String) {
         if !Path::new(&full_path).exists() {
             create_dir_all(full_path).expect("FILE ERROR: Unable to create directory");
         }
-
         let uint8_data: Vec<u8> = content.split(",").collect::<Vec<&str>>().iter().map(|x| {
             x.parse::<u8>().unwrap()
         }).collect();
@@ -50,53 +48,39 @@ pub fn unbundle(file: String) {
 }   
 
 
-fn append_out_file(data: Option<String>) {
+fn append_out_file(data: Option<&str>) {
     if data == None {
         File::create("out.tsar").expect("FILE ERROR: Unable to create file");
     } else {
-        let mut file = OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open("out.tsar")
-        .unwrap();
-        writeln!(file, "{}", data.unwrap()).expect("FILE ERROR: Unable to write to file");
+        let data = data.unwrap();
+        let mut buf = File::create("out.tsar").unwrap();
+        buf.write(data.as_bytes()).unwrap();
     }   
 }
 
-fn read_recursive(path: String, mut arr_files: Vec<String>) -> Vec<String> {
-    let paths = read_dir(&path).unwrap();
-
-    for item in paths {
-        let name = &item.unwrap().file_name().into_string().unwrap();
-        if name.chars().nth(0).unwrap() == '.' { continue } // Ignores hidden files
-        if metadata(format!("{}/{}", path, name)).unwrap().is_dir() {
-            arr_files = read_recursive(format!("{}/{}", path, name), arr_files);
+fn read_recursive(path: &str, mut arr_files: Vec<String>) -> Vec<String> {
+    for item in read_dir(path).unwrap() {
+        let item = item.unwrap();
+        let new_path = item.path();
+        let name = item.file_name();
+        let name = name.to_str().to_owned().unwrap();
+        let full = &format!("{}/{}", path, name).to_owned();
+        if new_path.is_dir() {
+            arr_files = read_recursive(full, arr_files)
         } else {
-            let full_path = &format!("{}/{}", path, name);
-            let mut file_content: Vec<u8> = Vec::new();
-            
-            File::open(full_path)
-            .expect("FILE ERROR: Unable to read from file")
-            .read_to_end(&mut file_content)
-            .iter()
-            .map(|x| 
-                {
-                    x.to_string()
-                }
-            ).collect::<Vec<String>>()
-            .join(",");
-
-            append_out_file(Some(format!("{}:{}", full_path, file_content
-                .iter()
-                .map(|x| {
-                    x.to_string()
-                })
-                .collect::<Vec<String>>()
-                .join(","))
-            ));
+            let data = read(full).unwrap();
+            let mapped = &data.iter().map(|i| {
+                i.to_string()
+            }).collect::<Vec<String>>().join(",")[..];
+            let f = &format!("{}:{}\n", full, mapped);
+            append_out_file(Some(f));
         }
     }
-    
-    return arr_files;
+    arr_files
+}
 
+pub fn err_exit(msg: &str) {
+    let err = Error::new(ErrorKind::Other, msg);
+    println!("Error: {}", err); 
+    exit(1);
 }
